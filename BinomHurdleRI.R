@@ -1202,7 +1202,7 @@ inits <- readRDS("InitsRI.rds")
   prior.sigma2.sd = .5
 
   
-  steps.a1 <- 2
+  steps.a1 <- 3
   steps.a2 <- 2
   steps.g1 <- 3
   steps.g2 <- 3

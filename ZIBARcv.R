@@ -62,7 +62,7 @@ samp.clust <- function(alpha1, alpha2, gamma1, gamma2, psi){
   theta_0 <- rep(NA, length(y))
   clust <- rep(NA, length(y))
   V <- rep(NA, length(y))
-    linmod2 <- X%*%alpha2 + gamma2[ll] + psi*gamma1[ll]
+    linmod2 <- X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll]
     linmod1 <- X%*%alpha1 + gamma1[ll]
     p <- expit(linmod1)
     theta_0 <- (1-expit(linmod2))^(90)
@@ -90,7 +90,7 @@ log_lik_zero <- function(clust, alpha1, gamma1){
 
 
 log_lik_hurdle <- function(V, alpha2, psi, gamma1, gamma2){
-  linmod <- X%*%alpha2 + gamma2[ll] + psi*gamma1[ll]
+  linmod <- X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll]
   sum(V*linmod - K*log(1+exp(linmod)), na.rm=TRUE)
 } 
 
@@ -289,7 +289,7 @@ gradient_gamma1 <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, sigma
   q <- (1/sigma1^2)
   
   expon <- exp(X%*%alpha1 + gamma1[ll])
-  expon2 <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+  expon2 <- exp(X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll])
   
   lik_dot <- clust - expon/(1+expon)
   
@@ -336,7 +336,7 @@ gradient2_gamma1 <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, sigm
   q <- (1/sigma1^2)
   
   expon <- exp(X%*%alpha1 + gamma1[ll])
-  expon2 <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+  expon2 <- exp(X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll])
   
   lik_dot <- - expon/((1+expon)^2) *!is.na(clust)
   lik_dot2 <- - psi*psi*K*expon2/((1+expon2)^2)*!is.na(V)
@@ -365,16 +365,16 @@ gradient2_gamma1 <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, sigm
 #     th_hi[i] <- gamma1[i] + e
 #     th_lo[i] <- gamma1[i] - e
 #     #((((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_hi[ll] + log(deltat)))-((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_lo[ll] + log(deltat)))/(2*e)
-#     diff[i]<- (gradient_gamma1(th_hi)[i] - gradient_gamma1(th_lo)[i])/(2*e)
+#     diff[i]<- (gradient_gamma1(clust, V, alpha1, alpha2, th_hi, gamma2, psi, sigma1)[i] - gradient_gamma1(clust, V, alpha1, alpha2, th_lo, gamma2, psi, sigma1)[i])/(2*e)
 #   }
 #   return (diff)
 # }
-
-#  diff2_g1 <- gradient2_gamma1(gamma1)
+# 
+#  diff2_g1 <- gradient2_gamma1(clust, V, alpha1, alpha2, gamma1, gamma2, psi, sigma1)
 #  diff2_g1_num <- gradient2_gamma1_numerical(gamma1)
 #  head(diff2_g1)
 #  head(diff2_g1_num)
-#
+# 
 # diff2_g1 - diff2_g1_num
 
 gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, sigma1){
@@ -508,7 +508,7 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
    
    q <- (1/prior.sd2^2)*diag(d)
    
-   expon <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+   expon <- exp(X%*%alpha2 + rowSums(Z*gamma2[ll,]) + psi*gamma1[ll])
    
    lik_dot <- V - K*expon/(1+expon)
    
@@ -554,7 +554,7 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
    
    q <- (1/prior.sd2^2)
    
-   expon <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+   expon <- exp(X%*%alpha2 + rowSums(Z*gamma2[ll,]) + psi*gamma1[ll])
    
    lik_dot <- - K*expon/((1+expon)^2)
    
@@ -647,14 +647,14 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
  #alpha2_sample_norm(V, alpha2, psi, gamma1, gamma2)
  
  
- log_post_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
-   n <- length(gamma2)
-   linmod <- X%*%alpha2 + gamma2[ll] + psi*gamma1[ll]
+ log_post_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, Q){
+   n <- nrow(gamma2)
+   linmod <- X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll]
    like <- rep(NA, n)
    prior <- rep(NA, n)
    for(i in 1:n){
      like[i] <- sum(V[ll==i]*linmod[ll==i] - K*log(1+exp(linmod[ll==i])), na.rm=TRUE)
-     prior[i] <- dnorm(gamma2[i],0,sigma2, log=TRUE)
+     prior[i] <- -.5*as.numeric(gamma2[i,]%*%Q%*%gamma2[i,])
    }
    post <- like + prior
    post[is.nan(post)] <- -Inf
@@ -664,66 +664,63 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
  
  #log_post_gamma2(V, alpha2, psi, gamma1, gamma2, sigma2)
  
- gradient_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
-   d <- length(gamma2)
-   diff <- rep(NA, d)
+ gradient_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, Q){
+   N <- nrow(gamma2)
+   L <- ncol(gamma2)
+   diff <- matrix(NA, nrow=N, ncol=L)
    
-   q <- (1/sigma2^2)
-   
-   expon <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+   expon <- exp(X%*%alpha2 + rowSums(gamma2[ll,]*Z) + psi*gamma1[ll])
    
    lik_dot <- V - K*expon/(1+expon)
    
-   for(m in 1:d){
+   for(n in 1:N){
      
-     diff[m] <- sum(lik_dot[ll==m], na.rm=TRUE)
+     diff[n,] <- as.numeric(colSums(Z[ll==n,]*lik_dot[ll==n], na.rm=TRUE) - as.numeric(Q%*%gamma2[n,]))
    }
-   
-   diff <- as.numeric(diff) - q*gamma2
    
    #diff[abs(alpha1)>10] <- 0
    
    return(diff)
  }
  
- 
+ # 
  # gradient_gamma2_numerical <- function(gamma2){
- #   N <- length(gamma2)
- #   diff <- rep(NA, N)
+ #   N <- nrow(gamma2)
+ #   L <- ncol(gamma2)
+ #   diff <- matrix(NA, nrow=N, ncol=L)
  #   e <- .00001
- #   for(i in 1:N){
- #     th_hi <- gamma2
- #     th_lo <- gamma2
- #     th_hi[i] <- gamma2[i] + e
- #     th_lo[i] <- gamma2[i] - e
- #     #((((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_hi[ll] + log(deltat)))-((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_lo[ll] + log(deltat)))/(2*e)
- #     diff[i]<- (log_post_gamma2(th_hi) - log_post_gamma2(th_lo))/(2*e)
+ #   for(n in 1:N){
+ #     for(l in 1:L){
+ #       th_hi <- gamma2
+ #       th_lo <- gamma2
+ #       th_hi[n,l] <- gamma2[n,l] + e
+ #       th_lo[n,l] <- gamma2[n,l] - e
+ #       #((((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_hi[ll] + log(deltat)))-((1/deltat)*cbind(Z,Zt)%*%alpha1 + sigma1*th_lo[ll] + log(deltat)))/(2*e)
+ #       diff[n,l]<- (log_post_gamma2(V, alpha2, psi, gamma1, th_hi, Q)[n] - log_post_gamma2(V, alpha2, psi, gamma1, th_lo, Q)[n])/(2*e)
+ #     }
  #   }
  #   return (diff)
  # }
  # 
- #  diff1_g2 <- gradient_gamma2(gamma2)
+ #  diff1_g2 <- gradient_gamma2(V, alpha2, psi, gamma1, gamma2, Q)
  #  diff_g2_num <- gradient_gamma2_numerical(gamma2)
- #  diff1_g2 - diff_g2_num
+ #  head(diff1_g2 - diff_g2_num)
 
  
  
- gradient2_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
-   d <- length(gamma2)
-   diff <- rep(NA, d)
+ gradient2_gamma2 <- function(V, alpha2, psi, gamma1, gamma2, Q){
+   N <- nrow(gamma2)
+   L <- ncol(gamma2)
+   diff <- matrix(NA, nrow=N, ncol=L)
    
-   q <- (1/sigma2^2)
-   
-   expon <- exp(X%*%alpha2 + gamma2[ll] + psi*gamma1[ll])
+   expon <- exp(X%*%alpha2 + rowSums(Z*gamma2[ll,]) + psi*gamma1[ll])
    
    lik_dot <- (- K*expon/((1+expon)^2))*!is.na(V)
    
-   for(m in 1:d){
+   for(n in 1:N){
      
-     diff[m] <- sum(lik_dot[ll==m], na.rm=TRUE)
+     diff[n,] <- as.numeric(colSums(Z[ll==n,]*lik_dot[ll==n], na.rm=TRUE) - as.numeric(diag(Q)))
    }
-   
-   diff <- as.numeric(diff) - q
    
    #diff[abs(alpha1)>10] <- 0
    
@@ -754,13 +751,13 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
  # 
  # diff2_g2 - diff2_g2_num
  
- gamma2_norm_approx <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
+ gamma2_norm_approx <- function(V, alpha2, psi, gamma1, gamma2, Q){
    alp1 <- gamma2
    
    
    for(step in 1:steps.g2){
-     grad1 <- gradient_gamma2(V, alpha2, psi, gamma1, alp1, sigma2)
-     grad2 <- gradient2_gamma2(V, alpha2, psi, gamma1, alp1, sigma2)
+     grad1 <- gradient_gamma2(V, alpha2, psi, gamma1, alp1, Q)
+     grad2 <- gradient2_gamma2(V, alpha2, psi, gamma1, alp1, Q)
      
      Q_approx <- - grad2
      mode_approx <- c(alp1) - (1/grad2)*c(grad1)
@@ -770,38 +767,10 @@ gamma1_norm_approx <- function(clust, V, alpha1, alpha2, gamma1, gamma2, psi, si
  }
  
  
- # gamma2_sample_norm <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
- #   a1_approx <-  gamma2_norm_approx(V, alpha2, psi, gamma1, gamma2, sigma2)
- #   
- #   
- #   gamma2_star <- as.numeric(rmvnorm(1, a1_approx$mode_approx, solve(a1_approx$Q_approx)))
- #   
- #   
- #   a1_approx_star <-  gamma2_norm_approx(V, alpha2, psi, gamma1, gamma2_star, sigma2)
- #   
- #   log_post_old <-  log_post_gamma2(V, alpha2, psi, gamma1, gamma2, sigma2)
- #   log_post_star <- log_post_gamma2(V, alpha2, psi, gamma1, gamma2_star, sigma2)
- #   
- #   J_old <- sum(dnorm(gamma2, a1_approx_star$mode_approx, sqrt(diag(1/a1_approx_star$Q_approx)), log=TRUE))
- #   J_star <- sum(dnorm(gamma2_star, a1_approx$mode_approx, sqrt(diag(1/a1_approx$Q_approx)), log=TRUE))
- #   
- #   r <- exp(log_post_star + sum(J_old) - log_post_old - sum(J_star))
- #   if(!is.finite(r)){r <- 0}
- #   if(runif(1) < r){
- #     th <- gamma2_star
- #   }else{
- #     th <- gamma2
- #   }
- #   p_jump <- min(1,r)
- #   return(list(gamma2=th, p_jump=p_jump))
- # }
- 
- 
- 
- gamma2_sample_norm <- function(V, alpha2, psi, gamma1, gamma2, sigma2){
+ gamma2_sample_norm <- function(V, alpha2, psi, gamma1, gamma2, Q){
    n <- length(gamma2)
    
-   a1_approx <-  gamma2_norm_approx(V, alpha2, psi, gamma1, gamma2, sigma2)
+   a1_approx <-  gamma2_norm_approx(V, alpha2, psi, gamma1, gamma2, Q)
    
    
    gamma2_star <- as.numeric(rnorm(n, a1_approx$mode_approx, 1/sqrt(a1_approx$Q_approx)))
@@ -1202,7 +1171,7 @@ inits <- readRDS("InitsRI.rds")
   prior.sigma2.sd = .5
 
   
-  steps.a1 <- 2
+  steps.a1 <- 3
   steps.a2 <- 2
   steps.g1 <- 3
   steps.g2 <- 3
